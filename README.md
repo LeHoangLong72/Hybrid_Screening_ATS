@@ -38,16 +38,36 @@ com.ats.hybrid
     └── benchmark       # GroundTruthEvaluator, MetricsCalculator (Precision, Recall, F1, nDCG@10)
 ```
 
-### Công nghệ sử dụng:
-* **Backend Core:** Java 17/21 (hỗ trợ Virtual Threads), Spring Boot 3.3.x, Spring Data JPA, Spring Security 6.
-* **Cơ sở dữ liệu "3-trong-1" (PostgreSQL 16):**
-  1. Dữ liệu quan hệ ACID + cột `JSONB`.
-  2. Full-Text Search BM25 (`tsvector`, `ts_rank_cd`).
-  3. Vector Search (`pgvector` với chỉ mục HNSW) và so khớp chuỗi mờ (`pg_trgm`, `fuzzystrmatch`).
-* **Hàng đợi & Lưu trữ:** RabbitMQ (Idempotent Consumer, Exponential Backoff, Dead-Letter Queue), MinIO (S3-compatible Presigned URL).
-* **Xử lý Tài liệu & An ninh:** Apache PDFBox (quét tọa độ Bounding Box $x, y, w, h$, kích thước font và màu sắc), Apache POI, Tesseract OCR (`tess4j`), Bucket4j (Rate Limiter).
-* **Tài liệu API:** Springdoc OpenAPI 3 (Swagger UI).
-* **Frontend:** Next.js (App Router), React 18, TypeScript, Tailwind CSS, `@dnd-kit/core` (Kanban kéo thả), StompJS (WebSocket).
+### 🛠️ Chi tiết Công nghệ & Thư viện Cốt lõi (Tech Stack Breakdown)
+
+| Tầng Kiến trúc (Layer) | Công nghệ / Thư viện | Vai trò & Lý do Lựa chọn Kỹ thuật |
+| :--- | :--- | :--- |
+| **Backend Core** | **Java 21 / 17** | Sử dụng **Virtual Threads** (`spring.threads.virtual.enabled=true`) xử lý hàng ngàn tác vụ I/O blocking (gọi MinIO, OCR, LLM API) đồng thời mà không nghẽn thread pool. |
+| | **Spring Boot 3.3.x** | Khung phát triển ứng dụng doanh nghiệp chuẩn hóa, tích hợp sẵn RFC 7807 `ProblemDetail`. |
+| | **Spring Security 6** | Xác thực JWT phi trạng thái, phân quyền dựa trên vai trò (RBAC) kết hợp **Row-Level Security (RLS)** giới hạn quyền truy cập hồ sơ của Interviewer. |
+| | **Spring Data JPA & Hibernate 6** | Quản lý quan hệ thực thể, triển khai **Optimistic Locking (`@Version`)** ngăn chặn xung đột ghi đè khi nhiều Recruiter kéo thả Kanban cùng lúc. |
+| **Cơ sở Dữ liệu "3-trong-1"** | **PostgreSQL 16** | Đóng vai trò là CSDL quan hệ ACID chính, lưu trữ JSONB linh hoạt cho các bộ lọc động. |
+| | **PostgreSQL Full-Text Search** | Chỉ mục `tsvector` và hàm xếp hạng `ts_rank_cd` phục vụ tìm kiếm từ khóa chính xác (**BM25 Lexical Search**). |
+| | **pgvector Extension** | Lưu trữ Vector Embedding và đánh chỉ mục đồ thị **HNSW (Hierarchical Navigable Small World)** đo khoảng cách Cosine (`<=>`) cho tìm kiếm ngữ nghĩa. |
+| | **pg_trgm & fuzzystrmatch** | Tính điểm tương đồng Trigram ($\ge 0.85$) để **Khử trùng lặp Ứng viên Đa mùa (Entity Resolution)** trên Họ tên không dấu, Năm sinh và Tổ chức. |
+| **Hàng đợi & Bất đồng bộ** | **RabbitMQ (Spring AMQP)** | Điều phối luồng xử lý CV bất đồng bộ; cấu hình **Idempotent Consumer**, thử lại theo cấp số nhân (**Exponential Backoff** 2s $\rightarrow$ 4s $\rightarrow$ 8s) và đẩy lỗi vào **Dead-Letter Queue (DLQ)**. |
+| **Trí tuệ Nhân tạo có Kiểm soát** | **Spring AI** | Kết nối linh hoạt tới **Google Gemini 2.5 Flash** / **OpenAI API**; bắt buộc chế độ **Structured Outputs (JSON Schema)** chống hallucination kiểu dữ liệu. |
+| | **Multilingual Embeddings** | Mô hình nhúng đa ngôn ngữ (`text-embedding-3-small` / `bge-m3`) hỗ trợ biểu diễn văn bản song ngữ Việt - Anh. |
+| | **Bucket4j** | Thuật toán **Token Bucket** giới hạn tốc độ gọi API bên ngoài (Rate Limiting), bảo vệ hạn mức chi phí LLM. |
+| **Xử lý Văn bản & Phòng thủ** | **Apache PDFBox (Custom)** | Trích xuất tọa độ Bounding Box $(x, y, w, h)$ từng ký tự, phát hiện rãnh chia cột (**Vertical Gutter**), đo kích thước font ($\le 2\text{pt}$) và so sánh màu chữ với nền ($\Delta E < 5.0$) chống Prompt Injection. |
+| | **Apache POI** | Bóc tách tài liệu `.docx` có cấu hình an toàn chống tấn công **XXE (XML External Entity)** và **Zip Bomb**. |
+| | **Tesseract OCR (`tess4j`)** | Tự động kích hoạt nhận diện chữ từ ảnh quét (Scan) khi số lượng ký tự text trong PDF $< 50$. |
+| | **Apache Tika** | Xác thực chữ ký tệp thực tế (**Magic Bytes Validator**) ở cổng Ingestion, ngăn chặn giả mạo đuôi file. |
+| **Lưu trữ & Lịch chuẩn** | **MinIO (S3-Compatible)** | Hệ thống lưu trữ tệp đối tượng; bảo mật tài liệu CV thông qua **Presigned URL** có hiệu lực giới hạn (15 phút). |
+| | **RFC 5545 (`.ics`)** | Tự động sinh tệp lịch chuẩn quốc tế đính kèm email; ứng viên xác nhận tham gia bằng **Stateless Magic Link** ký chữ ký số `HMAC-SHA256`. |
+| **Tài liệu API & Testing** | **Springdoc OpenAPI 3 (Swagger UI)** | Tự động sinh tài liệu giao diện web tương tác trực quan tại `/swagger-ui/index.html`. |
+| | **JUnit 5 & Mockito** | Kiểm thử đơn vị và kiểm thử tích hợp tự động cho toàn bộ 17 Business Rules. |
+| **Frontend Web Application** | **Next.js (App Router)** | Framework React full-stack hiện đại, Server-Side Rendering (SSR) và tối ưu hóa hiệu năng render. |
+| | **TypeScript** | Định kiểu tĩnh nghiêm ngặt trên toàn bộ luồng truyền nhận dữ liệu. |
+| | **Tailwind CSS & Vanilla CSS** | Thiết kế giao diện hiện đại theo chuẩn Design System (Sleek Dark/Light theme, Micro-animations). |
+| | **@dnd-kit/core** | Thư viện kéo thả mượt mà cho bảng Kanban, tích hợp thuật toán định vị **LexoRank**. |
+| | **StompJS & SockJS** | Kết nối WebSocket nhận cập nhật tức thời (Real-time updates) trạng thái hồ sơ và kết quả sàng lọc AI. |
+
 
 ---
 
