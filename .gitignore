@@ -1,0 +1,18 @@
+# Internal Specification Documents
+BUSINESS_SPECIFICATION.md
+PROJECT_CONTEXT.md
+
+# Build & Dependencies
+node_modules/
+.next/
+.gradle/
+build/
+backend/.gradle/
+backend/build/
+
+# IDE & OS
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
